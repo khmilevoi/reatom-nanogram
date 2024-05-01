@@ -7,7 +7,7 @@ import {
   UserItemAtom,
 } from "./model.ts";
 import { clsx } from "clsx";
-import { FunctionComponent, MouseEvent } from "react";
+import { FunctionComponent, MouseEvent, useState } from "react";
 
 export const App = reatomComponent(() => {
   return (
@@ -19,6 +19,8 @@ export const App = reatomComponent(() => {
 }, "App");
 
 const Status = reatomComponent(({ ctx }) => {
+  const [size, setSize] = useState(ctx.get(gameStatus.fieldSizeAtom) / 5);
+
   return (
     <>
       {
@@ -27,17 +29,15 @@ const Status = reatomComponent(({ ctx }) => {
             <div>
               <input
                 type={"number"}
-                value={ctx.spy(gameStatus.fieldSizeAtom) / 5}
-                onChange={(event) =>
-                  gameStatus.fieldSizeAtom(
-                    ctx,
-                    event.currentTarget.valueAsNumber * 5,
-                  )
-                }
+                value={size}
+                onChange={(event) => setSize(event.currentTarget.valueAsNumber)}
               />
               <button
                 key={"action"}
-                onClick={() => gameStatus.statusAtom(ctx, "playing")}
+                onClick={() => {
+                  gameStatus.fieldSizeAtom(ctx, size * 5);
+                  return gameStatus.statusAtom(ctx, "playing");
+                }}
               >
                 Play
               </button>
@@ -158,10 +158,6 @@ const Item = reatomComponent<{ userItem: UserItemAtom }>(
     const isHidden = ctx.spy(userItem.isHiddenAtom);
     const isWrong = ctx.spy(userItem.isWrongAtom);
 
-    const updateValue = (checked: boolean) => {
-      userItem.update(ctx, checked);
-    };
-
     const handleMouseEnter = (event: MouseEvent<HTMLDivElement>) => {
       event.preventDefault();
 
@@ -169,7 +165,7 @@ const Item = reatomComponent<{ userItem: UserItemAtom }>(
         return;
       }
 
-      updateValue(event.buttons === 1);
+      userItem.update(ctx, event.buttons === 1);
     };
 
     const handleClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -179,7 +175,7 @@ const Item = reatomComponent<{ userItem: UserItemAtom }>(
         return;
       }
 
-      updateValue(event.button === 0);
+      userItem.update(ctx, event.button === 0);
     };
 
     return (

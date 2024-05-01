@@ -3,8 +3,10 @@ import {
   action,
   atom,
   AtomMut,
+  Ctx,
   withAssign,
   withReset,
+  Atom,
 } from "@reatom/framework";
 
 export type Field = boolean[][];
@@ -25,6 +27,10 @@ const createTimerAtom = (interval: number, name: string) => {
     withReset(),
     withAssign((target) => ({
       start: action((ctx) => {
+        if (id !== 0) {
+          clearInterval(id);
+        }
+
         id = setInterval(() => {
           target(ctx, (prev) => prev + 1);
         }, interval);
@@ -35,6 +41,42 @@ const createTimerAtom = (interval: number, name: string) => {
     })),
   );
 };
+
+type BlockerAtom = AtomMut<boolean> & {
+  unblock: Action<[], void>;
+  block: Action<[], void>;
+};
+
+const createBlockerAtom = (): BlockerAtom => {
+  return atom(false, "createBlockerAtom").pipe(
+    withAssign((target) => ({
+      block: action((ctx) => {
+        target(ctx, true);
+      }, "block"),
+      unblock: action((ctx) => {
+        target(ctx, false);
+      }, "unblock"),
+    })),
+  );
+};
+
+const withBlocker =
+  <Target extends Atom>(blockerAtom: BlockerAtom) =>
+  (target: Target): Target => {
+    return new Proxy<Target>(target, {
+      apply(target: Target, thisArg: unknown, argArray: [Ctx, ...unknown[]]) {
+        if (argArray[0].get(blockerAtom)) {
+          return;
+        }
+
+        if ("apply" in target && typeof target.apply === "function") {
+          return target.apply(thisArg, argArray);
+        }
+      },
+    });
+  };
+
+const blocker = createBlockerAtom();
 
 export const gameStatus = {
   statusAtom: atom<"start" | "playing" | "complete" | "game-over">(
@@ -58,14 +100,17 @@ gameStatus.statusAtom.onChange((ctx, status) => {
       gameStatus.amountOfShownItemsAtom.reset(ctx);
       break;
     case "playing":
+      blocker.unblock(ctx);
       createField(ctx);
       gameStatus.timerAtom.start(ctx);
       break;
     case "complete":
       gameStatus.timerAtom.stop(ctx);
+      blocker.block(ctx);
       break;
     case "game-over":
       gameStatus.timerAtom.stop(ctx);
+      blocker.block(ctx);
       break;
   }
 });
@@ -91,7 +136,7 @@ export const $fieldDescriptorAtom = atom<{
   columns: number[][];
 }>((ctx) => {
   const field = ctx.spy($fieldAtom);
-  const size = ctx.spy(gameStatus.fieldSizeAtom);
+  const size = ctx.get(gameStatus.fieldSizeAtom);
 
   if (field === null) {
     return { rows: [], columns: [] };
@@ -123,10 +168,6 @@ export const $fieldDescriptorAtom = atom<{
 
   return { rows, columns };
 }, "$fieldDescriptorAtom");
-
-$fieldDescriptorAtom.onChange((_ctx, { rows, columns }) => {
-  console.log("result", { rows, columns });
-});
 
 export const createField = action<Field>((ctx) => {
   const size = ctx.get(gameStatus.fieldSizeAtom);
@@ -162,7 +203,7 @@ const createItem = ({ row, column, item }: CreateItemParams): UserItemAtom => {
   const userItem: UserItemAtom = {
     id: `${row}-${column}`,
     item: item,
-    isHiddenAtom: atom(true, "isHiddenAtom"),
+    isHiddenAtom: atom(true, "isHiddenAtom").pipe(withBlocker(blocker)),
     isWrongAtom: atom(false, "isWrongAtom"),
     update: action(async (ctx, choice) => {
       if (!ctx.get(userItem.isHiddenAtom)) {
@@ -188,14 +229,23 @@ const createItem = ({ row, column, item }: CreateItemParams): UserItemAtom => {
           break;
         }
       }
-    }, "update"),
+    }, "update").pipe(withBlocker(blocker)),
   };
 
   return userItem;
 };
 
 const completeField = action(
-  (ctx, { column, row }: { row: number; column: number }) => {
+  (
+    ctx,
+    {
+      column,
+      row,
+    }: {
+      row: number;
+      column: number;
+    },
+  ) => {
     const fieldSize = ctx.get(gameStatus.fieldSizeAtom);
     const userField = ctx.get($userFieldAtom);
 
